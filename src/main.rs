@@ -1,7 +1,7 @@
 use std::{collections::HashMap, io::{Result, Write}, fs::{File, self}, sync::Mutex};
 
 use actix_cors::Cors;
-use actix_web::{web, Responder, HttpResponse, get, HttpServer, App, http::header::{self, ContentType}, delete};
+use actix_web::{web, Responder, HttpResponse, get, HttpServer, App, http::header::{self, ContentType}, delete, post, put};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -151,6 +151,50 @@ async fn delete_task(state: web::Data<AppState>, id: web::Path<u32>) -> impl Res
     HttpResponse::Ok()
 }
 
+
+#[post("/users")]
+async fn create_user(state: web::Data<AppState>, user: web::Json<User>) -> impl Responder {
+    let mut database = state.db.lock().unwrap();
+    database.add_user(user.into_inner());
+    database.save_to_file().unwrap();
+    HttpResponse::Ok()
+}
+
+#[get("/users/")]
+async fn get_users(state: web::Data<AppState>) -> impl Responder {
+    let database = state.db.lock().unwrap();
+    let users = database.get_users();
+    let body = serde_json::to_string(&users).unwrap();
+    HttpResponse::Ok()
+            .content_type(ContentType::json())
+            .body(body)
+}
+
+#[get("/users/{id}")]
+async fn get_user(state: web::Data<AppState>, id: web::Path<u32>) -> impl Responder {
+    let database = state.db.lock().unwrap();
+    let user = database.get_user(&id).unwrap();
+    let body = serde_json::to_string(user).unwrap();
+    HttpResponse::Ok()
+            .content_type(ContentType::json())
+            .body(body)
+}
+
+#[put("/users/{id}")]
+async fn update_user(state: web::Data<AppState>, user: web::Json<User>) -> impl Responder {
+    let mut database = state.db.lock().unwrap();
+    database.update_user(user.into_inner());
+    database.save_to_file().unwrap();
+    HttpResponse::Ok()
+}
+
+#[delete("/users/{id}")]
+async fn delete_user(state: web::Data<AppState>, id: web::Path<u32>) -> impl Responder {
+    let mut database = state.db.lock().unwrap();
+    database.delete_user(&id);
+    HttpResponse::Ok()
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let load_from_file = match Database::load_from_file() {
@@ -180,6 +224,11 @@ async fn main() -> std::io::Result<()> {
             .route("/tasks/", web::post().to(create_task))
             .route("/tasks/", web::put().to(update_task))
             .service(delete_task)
+            .service(get_users)
+            .service(get_user)
+            .service(create_user)
+            .service(update_user)
+            .service(delete_user)
     })
     .bind(("127.0.0.1", 8080))?
     .run()
