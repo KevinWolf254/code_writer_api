@@ -1,5 +1,7 @@
-use std::{collections::HashMap, io::{Result, Write}, fs::{File, self}};
+use std::{collections::HashMap, io::{Result, Write}, fs::{File, self}, sync::Mutex};
 
+use actix_cors::Cors;
+use actix_web::{web, Responder, HttpResponse, get, HttpServer, App, http::header::{self, ContentType}, delete};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -37,7 +39,7 @@ impl Database {
         Ok(())
     }
 
-    fn load_from_file(&self) -> Result<Self> {
+    fn load_from_file() -> Result<Self> {
         let content = fs::read_to_string("database.json")?;
         let db: Database = serde_json::from_str(&content)?;
         Ok(db)
@@ -104,6 +106,82 @@ impl UserTrait for Database {
     }
 }
 
-fn main() {
-    println!("Hello, world!");
+struct AppState {
+    db: Mutex<Database>
+}
+
+async fn create_task(state: web::Data<AppState>, task: web::Json<Task>) -> impl Responder {
+    let mut database = state.db.lock().unwrap();
+    database.add_task(task.into_inner());
+    database.save_to_file().unwrap();
+    HttpResponse::Ok()
+}
+
+#[get("/tasks/")]
+async fn get_tasks(state: web::Data<AppState>) -> impl Responder {
+    let database = state.db.lock().unwrap();
+    let tasks = database.get_tasks();
+    let body = serde_json::to_string(&tasks).unwrap();
+    HttpResponse::Ok()
+            .content_type(ContentType::json())
+            .body(body)
+}
+
+#[get("/tasks/{id}")]
+async fn get_task(state: web::Data<AppState>, id: web::Path<u32>) -> impl Responder {
+    let database = state.db.lock().unwrap();
+    let task = database.get_task(&id).unwrap();
+    let body = serde_json::to_string(task).unwrap();
+    HttpResponse::Ok()
+            .content_type(ContentType::json())
+            .body(body)
+}
+
+async fn update_task(state: web::Data<AppState>, task: web::Json<Task>) -> impl Responder {
+    let mut database = state.db.lock().unwrap();
+    database.update_task(task.into_inner());
+    database.save_to_file().unwrap();
+    HttpResponse::Ok()
+}
+
+#[delete("/tasks/{id}")]
+async fn delete_task(state: web::Data<AppState>, id: web::Path<u32>) -> impl Responder {
+    let mut database = state.db.lock().unwrap();
+    database.delete_task(&id);
+    HttpResponse::Ok()
+}
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    let load_from_file = match Database::load_from_file() {
+        Ok(db) => db,
+        Err(_) => Database::new()
+    };
+
+    let data = web::Data::new(AppState {
+        db: Mutex::new(load_from_file)
+    });
+
+    HttpServer::new(move || {
+        App::new()
+            .wrap(
+                Cors::permissive()
+                    .allowed_origin_fn(|origin, _req_header| {
+                        origin.as_bytes().starts_with(b"http://localhost") || origin == "null"
+                    })
+                    .allowed_methods(vec!["GET", "POST", "PUT", "DELETE"])
+                    .allowed_headers(vec![header::AUTHORIZATION, header::ACCEPT, header::CONTENT_TYPE])
+                    .supports_credentials()
+                    .max_age(3600)
+            )
+            .app_data(data.clone())
+            .service(get_tasks)
+            .service(get_task)
+            .route("/tasks/", web::post().to(create_task))
+            .route("/tasks/", web::put().to(update_task))
+            .service(delete_task)
+    })
+    .bind(("127.0.0.1", 8080))?
+    .run()
+    .await
 }
