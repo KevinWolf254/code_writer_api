@@ -1,7 +1,16 @@
-use std::{collections::HashMap, io::{Result, Write}, fs::{File, self}, sync::Mutex};
+use std::{
+    collections::HashMap,
+    fs::{self, File},
+    io::{Result, Write},
+    sync::Mutex,
+};
 
 use actix_cors::Cors;
-use actix_web::{web, Responder, HttpResponse, get, HttpServer, App, http::header::{self, ContentType}, delete, post, put};
+use actix_web::{
+    delete, get,
+    http::header::{self, ContentType},
+    post, put, web, App, HttpResponse, HttpServer, Responder,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -107,7 +116,7 @@ impl UserTrait for Database {
 }
 
 struct AppState {
-    db: Mutex<Database>
+    db: Mutex<Database>,
 }
 
 async fn create_task(state: web::Data<AppState>, task: web::Json<Task>) -> impl Responder {
@@ -123,25 +132,28 @@ async fn get_tasks(state: web::Data<AppState>) -> impl Responder {
     let tasks = database.get_tasks();
     let body = serde_json::to_string(&tasks).unwrap();
     HttpResponse::Ok()
-            .content_type(ContentType::json())
-            .body(body)
+        .content_type(ContentType::json())
+        .body(body)
 }
 
 #[get("/tasks/{id}")]
 async fn get_task(state: web::Data<AppState>, id: web::Path<u32>) -> impl Responder {
     let database = state.db.lock().unwrap();
-    let task = database.get_task(&id).unwrap();
-    let body = serde_json::to_string(task).unwrap();
-    HttpResponse::Ok()
-            .content_type(ContentType::json())
-            .body(body)
+    match database.get_task(&id) {
+        Some(task) => {
+            let body = serde_json::to_string(task).unwrap();
+            HttpResponse::Ok()
+                .content_type(ContentType::json())
+                .body(body)
+        }
+        _ => HttpResponse::NotFound().finish(),
+    }
 }
 
 async fn update_task(state: web::Data<AppState>, task: web::Json<Task>) -> impl Responder {
     let mut database = state.db.lock().unwrap();
     database.update_task(task.into_inner());
-    database.save_to_file().unwrap();
-    HttpResponse::Ok()
+    save(database)
 }
 
 #[delete("/tasks/{id}")]
@@ -150,7 +162,6 @@ async fn delete_task(state: web::Data<AppState>, id: web::Path<u32>) -> impl Res
     database.delete_task(&id);
     HttpResponse::Ok()
 }
-
 
 #[post("/users")]
 async fn create_user(state: web::Data<AppState>, user: web::Json<User>) -> impl Responder {
@@ -166,26 +177,37 @@ async fn get_users(state: web::Data<AppState>) -> impl Responder {
     let users = database.get_users();
     let body = serde_json::to_string(&users).unwrap();
     HttpResponse::Ok()
-            .content_type(ContentType::json())
-            .body(body)
+        .content_type(ContentType::json())
+        .body(body)
 }
 
 #[get("/users/{id}")]
 async fn get_user(state: web::Data<AppState>, id: web::Path<u32>) -> impl Responder {
     let database = state.db.lock().unwrap();
-    let user = database.get_user(&id).unwrap();
-    let body = serde_json::to_string(user).unwrap();
-    HttpResponse::Ok()
-            .content_type(ContentType::json())
-            .body(body)
+    match database.get_user(&id) {
+        Some(user) => {
+            let body = serde_json::to_string(user).unwrap();
+            HttpResponse::Ok()
+                .content_type(ContentType::json())
+                .body(body)
+        }
+        _ => HttpResponse::NotFound().finish(),
+    }
 }
 
 #[put("/users/{id}")]
 async fn update_user(state: web::Data<AppState>, user: web::Json<User>) -> impl Responder {
     let mut database = state.db.lock().unwrap();
     database.update_user(user.into_inner());
-    database.save_to_file().unwrap();
-    HttpResponse::Ok()
+    save(database)
+}
+
+fn save(database: std::sync::MutexGuard<'_, Database>) -> impl Responder {
+    let response = match database.save_to_file() {
+        Ok(_) => HttpResponse::Ok(),
+        Err(_) => HttpResponse::InternalServerError(),
+    };
+    response
 }
 
 #[delete("/users/{id}")]
@@ -199,11 +221,11 @@ async fn delete_user(state: web::Data<AppState>, id: web::Path<u32>) -> impl Res
 async fn main() -> std::io::Result<()> {
     let load_from_file = match Database::load_from_file() {
         Ok(db) => db,
-        Err(_) => Database::new()
+        Err(_) => Database::new(),
     };
 
     let data = web::Data::new(AppState {
-        db: Mutex::new(load_from_file)
+        db: Mutex::new(load_from_file),
     });
 
     HttpServer::new(move || {
@@ -214,9 +236,13 @@ async fn main() -> std::io::Result<()> {
                         origin.as_bytes().starts_with(b"http://localhost") || origin == "null"
                     })
                     .allowed_methods(vec!["GET", "POST", "PUT", "DELETE"])
-                    .allowed_headers(vec![header::AUTHORIZATION, header::ACCEPT, header::CONTENT_TYPE])
+                    .allowed_headers(vec![
+                        header::AUTHORIZATION,
+                        header::ACCEPT,
+                        header::CONTENT_TYPE,
+                    ])
                     .supports_credentials()
-                    .max_age(3600)
+                    .max_age(3600),
             )
             .app_data(data.clone())
             .service(get_tasks)
