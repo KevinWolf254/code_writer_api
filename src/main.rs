@@ -122,8 +122,7 @@ struct AppState {
 async fn create_task(state: web::Data<AppState>, task: web::Json<Task>) -> impl Responder {
     let mut database = state.db.lock().unwrap();
     database.add_task(task.into_inner());
-    database.save_to_file().unwrap();
-    HttpResponse::Ok()
+    save(database)
 }
 
 #[get("/tasks/")]
@@ -160,15 +159,14 @@ async fn update_task(state: web::Data<AppState>, task: web::Json<Task>) -> impl 
 async fn delete_task(state: web::Data<AppState>, id: web::Path<u32>) -> impl Responder {
     let mut database = state.db.lock().unwrap();
     database.delete_task(&id);
-    HttpResponse::Ok()
+    save(database)
 }
 
 #[post("/users")]
 async fn create_user(state: web::Data<AppState>, user: web::Json<User>) -> impl Responder {
     let mut database = state.db.lock().unwrap();
     database.add_user(user.into_inner());
-    database.save_to_file().unwrap();
-    HttpResponse::Ok()
+    save(database)
 }
 
 #[get("/users/")]
@@ -202,19 +200,18 @@ async fn update_user(state: web::Data<AppState>, user: web::Json<User>) -> impl 
     save(database)
 }
 
-fn save(database: std::sync::MutexGuard<'_, Database>) -> impl Responder {
-    let response = match database.save_to_file() {
-        Ok(_) => HttpResponse::Ok(),
-        Err(_) => HttpResponse::InternalServerError(),
-    };
-    response
-}
-
 #[delete("/users/{id}")]
 async fn delete_user(state: web::Data<AppState>, id: web::Path<u32>) -> impl Responder {
     let mut database = state.db.lock().unwrap();
     database.delete_user(&id);
-    HttpResponse::Ok()
+    save(database)
+}
+
+fn save(database: std::sync::MutexGuard<'_, Database>) -> impl Responder {
+    match database.save_to_file() {
+        Ok(_) => HttpResponse::Ok(),
+        Err(_) => HttpResponse::InternalServerError(),
+    }
 }
 
 #[actix_web::main]
